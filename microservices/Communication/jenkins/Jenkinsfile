@@ -1,0 +1,107 @@
+pipeline {
+   agent any
+   
+//       environment {
+//         FULL_PATH_BRANCH = "${sh(script:'git name-rev --name-only HEAD', returnStdout: true)}"
+//         GIT_BRANCH = FULL_PATH_BRANCH.substring(FULL_PATH_BRANCH.lastIndexOf('/') + 1, FULL_PATH_BRANCH.length())
+//         GIT_REPO = 'https://github.com/BoppoTechnologies/Rangeplus-Communication-Microservice.git'
+//     }
+    
+//   options { 
+//      disableConcurrentBuilds() 
+//   }
+
+
+ stages{
+     
+    stage('SCM Checkout - Prod'){
+       steps{
+            echo "clean workspace.."
+            cleanWs()
+        
+            echo "Cloning prod branch..."
+            git credentialsId: 'git-creds', url: 'https://github.com/BoppoTechnologies/Rangeplus-Communication-Microservice.git',branch: 'main'
+
+            echo "Changing Env Files...."
+            sh "/var/lib/jenkins/workspace/script-prod/rangeplus-comm-env.sh"
+            sh 'aws s3 cp "s3://rangeplus-cicd-credentials/Microservices/Communication/Prod/Dockerfile" "Dockerfile" '
+            
+            sh 'aws s3 cp "s3://rangeplus-cicd-credentials/Microservices/Communication/Stage/cert/private.key" "/var/lib/jenkins/workspace/rangeplus-communication-microservice-prod/cert/private.key" '
+            sh 'aws s3 cp "s3://rangeplus-cicd-credentials/Microservices/Communication/Stage/cert/public.key" "/var/lib/jenkins/workspace/rangeplus-communication-microservice-prod/cert/public.key" '
+            sh 'aws s3 cp "s3://rangeplus-cicd-credentials/helm/prod/rangeplus-communication/" "rangeplus-communication" --recursive '
+
+        }
+    }
+    
+
+
+    stage('Docker Build and Push - Prod'){
+        steps{
+            echo "Deleting old containers..."
+            sh 'docker system prune -a -f --volumes'
+
+            echo "Building docker image..."
+           // sh 'docker build -t rangeplus .'
+
+            echo "Push docker image to dockerhub..."
+            withCredentials([string(credentialsId: 'docker-pwd', variable: 'dockerHubPwd')]){
+                sh "docker login -u rangeplus -p ${dockerHUBPwd}"
+                sh "docker buildx build --platform linux/arm64 --push -t rangeplus/communication:prodV${env.BUILD_NUMBER} ."
+                //sh "docker tag rangeplus rangeplus/communication:stageV${env.BUILD_NUMBER}"
+               // sh "docker push rangeplus/communication:stageV${env.BUILD_NUMBER}"
+            }
+        }
+    }
+//  stage('Dependency Check Report') {
+//         steps {
+//             dependencyCheck additionalArguments: ''' 
+//                 -o "./" 
+//                 -s "./"
+//                 -f "ALL" 
+//                 --prettyPrint''', odcInstallation: 'dp-check'
+//             dependencyCheckPublisher pattern: 'dependency-check-report.xml'
+//         }    
+//     }
+    // stage('Trivy Scan') {
+    //     steps {
+    //         script {
+    //             sh """trivy image --format template --template \"@/data/trivy-main/html.tpl\" --output trivy_report.html rangeplus/communication:stageV${env.BUILD_NUMBER} """
+    //         }
+    //         publishHTML(target: [
+    //             allowMissing: true,
+    //             alwaysLinkToLastBuild: false,
+    //             keepAll: true,
+    //             reportDir: ".",
+    //             reportFiles: "trivy_report.html",
+    //             reportName: "Trivy Report",
+    //             ])
+    //         }
+    // }    
+    stage('Build on k8 ') {
+       steps{
+            sh 'pwd'
+            //sh 'cp -R /var/lib/jenkins/workspace/helm/* .'
+		    sh 'ls -ltr'
+            sh 'pwd'
+            sh "/usr/local/bin/helm upgrade --install rangeplus-communication-prod-release rangeplus-communication --set image.repository=rangeplus/communication --set image.tag=prodV${env.BUILD_NUMBER}"
+  
+        }
+    }
+
+  }
+
+
+// post {
+     
+//      success {
+//          slackSend color: "good", message: "Status: ${currentBuild.result}\n | Job: ${env.JOB_NAME}\n | Build Number: ${env.BUILD_NUMBER}\n | Git Branch: ${env.GIT_BRANCH} | Git Repo: ${env.GIT_REPO}\n"
+//      }
+//      failure {
+//          slackSend color: "danger", message: "Status: ${currentBuild.result}\n | Job: ${env.JOB_NAME}\n | Build number: ${env.BUILD_NUMBER}\n | Git Branch: ${env.GIT_BRANCH}\n | Git Repo: ${env.GIT_REPO}\n"
+//      }
+//     aborted {
+//             slackSend color: "warning", message: "Status: PIPELINE ${currentBuild.result} | Job: ${env.JOB_NAME} | Build number ${env.BUILD_NUMBER}"
+//     }
+//  }
+ 
+}
